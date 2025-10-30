@@ -1,23 +1,23 @@
 from flask import Flask, request, jsonify
-import requests
-import json
-import traceback
+import requests, json, traceback
 from datetime import datetime
 
 app = Flask(__name__)
 
-# URLs de los servicios destino
+# URLs y cabeceras destino
 URL_1 = "https://pms.mincit.gov.co/one/"
 URL_2 = "https://pms.mincit.gov.co/two/"
 TOKEN = "ujS5y5yFrY678VUvWxKU769KpHUOTDXMKNU3w8BB"
-
 HEADERS = {
     "Authorization": f"token {TOKEN}",
     "Content-Type": "application/json"
 }
 
+# ------------------------------------------
+# Funciones auxiliares
+# ------------------------------------------
+
 def log(title, data=None):
-    """Imprime logs con timestamp y formato JSON legible"""
     print("\n" + "="*80)
     print(f"🕒 {datetime.now().isoformat()} | {title}")
     if data is not None:
@@ -27,41 +27,58 @@ def log(title, data=None):
             print(str(data))
     print("="*80 + "\n", flush=True)
 
+def get_text_from_dropdown(field):
+    """Convierte un campo de dropdown (con IDs) en su texto visible"""
+    if not field:
+        return None
+    value = field.get("value")
+    options = field.get("options", [])
+    if isinstance(value, list) and value:
+        for opt in options:
+            if opt["id"] == value[0]:
+                return opt["text"]
+    return value if isinstance(value, str) else None
+
+def normalize(field):
+    """Extrae el valor limpio según tipo"""
+    if not field:
+        return None
+    if field["type"] == "DROPDOWN":
+        return get_text_from_dropdown(field)
+    return field.get("value")
+
+# ------------------------------------------
+# Lógica principal
+# ------------------------------------------
+
 @app.route('/', methods=['POST'])
 def handle_tally_webhook():
     try:
         payload = request.get_json(force=True)
-        log("✅ Webhook recibido de Tally", payload)
+        log("✅ Webhook recibido", payload)
 
-        # --- Extraer campos del form ---
-        fields = {f["label"]: f.get("value") for f in payload["data"]["fields"]}
+        fields = payload["data"]["fields"]
 
-        # Normaliza valores que vienen en lista
-        def normalize(v):
-            if isinstance(v, list):
-                return v[0] if v else None
-            return v
-
-        # --- Crear JSON del Request 1 ---
+        # --- Mapeo del huésped principal (primer bloque) ---
         data1 = {
-            "tipo_identificacion": normalize(fields.get("Tipo de identificación")),
-            "numero_identificacion": normalize(fields.get("Número de identificación")),
-            "nombres": normalize(fields.get("Nombres")),
-            "apellidos": normalize(fields.get("Apellidos")),
-            "cuidad_residencia": normalize(fields.get("Ciudad de residencia")),
-            "cuidad_procedencia": normalize(fields.get("Ciudad de procedencia")),
-            "numero_habitacion": "706",  # Si este campo viene del form, cámbialo aquí
-            "motivo": normalize(fields.get("Motivo")),
-            "numero_acompanantes": normalize(fields.get("Número de acompañantes")),
-            "check_in": normalize(fields.get("Check-in")),
-            "check_out": normalize(fields.get("Check-out")),
-            "tipo_acomodacion": "Apartaestudio",  # o agrega al form
-            "costo": normalize(fields.get("Valor Pagado")),
+            "tipo_identificacion": normalize(fields[0]),
+            "numero_identificacion": normalize(fields[1]),
+            "nombres": normalize(fields[2]),
+            "apellidos": normalize(fields[3]),
+            "cuidad_residencia": normalize(fields[4]),
+            "cuidad_procedencia": normalize(fields[5]),
+            "numero_habitacion": "706",
+            "motivo": normalize(fields[6]),
+            "numero_acompanantes": normalize(fields[10]),
+            "check_in": normalize(fields[7]),
+            "check_out": normalize(fields[8]),
+            "tipo_acomodacion": "Apartaestudio",
+            "costo": normalize(fields[9]),
             "nombre_establecimiento": "Oikos Infinitum 58 Apto 706",
             "rnt_establecimiento": "183243"
         }
 
-        log("📤 JSON Enviado (Request 1)", data1)
+        log("📤 Enviando Request 1", data1)
         resp1 = requests.post(URL_1, headers=HEADERS, json=data1)
         log(f"📥 Respuesta Request 1 ({resp1.status_code})", resp1.text)
 
@@ -70,20 +87,21 @@ def handle_tally_webhook():
             num_acomp = int(data1.get("numero_acompanantes") or 0)
 
             if num_acomp >= 1 and padre_id:
+                # --- Mapeo del acompañante (segundo bloque) ---
                 data2 = {
-                    "tipo_identificacion": normalize(fields.get("Tipo de identificación (acompañante)")),
-                    "numero_identificacion": normalize(fields.get("Número de identificación (acompañante)")),
-                    "nombres": normalize(fields.get("Nombres (acompañante)")),
-                    "apellidos": normalize(fields.get("Apellidos (acompañante)")),
-                    "cuidad_residencia": normalize(fields.get("Ciudad de residencia (acompañante)")),
-                    "cuidad_procedencia": normalize(fields.get("Ciudad de procedencia (acompañante)")),
+                    "tipo_identificacion": normalize(fields[11]),
+                    "numero_identificacion": normalize(fields[12]),
+                    "nombres": normalize(fields[13]),
+                    "apellidos": normalize(fields[14]),
+                    "cuidad_residencia": normalize(fields[15]),
+                    "cuidad_procedencia": normalize(fields[16]),
                     "numero_habitacion": "706",
                     "check_in": data1["check_in"],
                     "check_out": data1["check_out"],
                     "padre": padre_id
                 }
 
-                log("📤 JSON Enviado (Request 2)", data2)
+                log("📤 Enviando Request 2", data2)
                 resp2 = requests.post(URL_2, headers=HEADERS, json=data2)
                 log(f"📥 Respuesta Request 2 ({resp2.status_code})", resp2.text)
             else:
