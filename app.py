@@ -1,5 +1,8 @@
 from flask import Flask, request, jsonify
 import requests
+import json
+import traceback
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -13,16 +16,27 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+def log(title, data=None):
+    """Imprime logs con timestamp y formato JSON legible"""
+    print("\n" + "="*80)
+    print(f"🕒 {datetime.now().isoformat()} | {title}")
+    if data is not None:
+        try:
+            print(json.dumps(data, indent=4, ensure_ascii=False))
+        except Exception:
+            print(str(data))
+    print("="*80 + "\n", flush=True)
+
 @app.route('/', methods=['POST'])
 def handle_tally_webhook():
     try:
-        payload = request.get_json()
-        print("✅ Webhook recibido de Tally:", payload)
+        payload = request.get_json(force=True)
+        log("✅ Webhook recibido de Tally", payload)
 
-        # --- Extraer campos ---
+        # --- Extraer campos del form ---
         fields = {f["label"]: f.get("value") for f in payload["data"]["fields"]}
 
-        # Algunos valores vienen como listas (por ejemplo dropdowns)
+        # Normaliza valores que vienen en lista
         def normalize(v):
             if isinstance(v, list):
                 return v[0] if v else None
@@ -36,7 +50,7 @@ def handle_tally_webhook():
             "apellidos": normalize(fields.get("Apellidos")),
             "cuidad_residencia": normalize(fields.get("Ciudad de residencia")),
             "cuidad_procedencia": normalize(fields.get("Ciudad de procedencia")),
-            "numero_habitacion": "706",  # Si este campo viene del form, reemplázalo aquí
+            "numero_habitacion": "706",  # Si este campo viene del form, cámbialo aquí
             "motivo": normalize(fields.get("Motivo")),
             "numero_acompanantes": normalize(fields.get("Número de acompañantes")),
             "check_in": normalize(fields.get("Check-in")),
@@ -47,16 +61,15 @@ def handle_tally_webhook():
             "rnt_establecimiento": "183243"
         }
 
-        print("📦 Enviando Request 1:", data1)
+        log("📤 JSON Enviado (Request 1)", data1)
         resp1 = requests.post(URL_1, headers=HEADERS, json=data1)
-        print("Response 1:", resp1.status_code, resp1.text)
+        log(f"📥 Respuesta Request 1 ({resp1.status_code})", resp1.text)
 
         if resp1.status_code == 201:
             padre_id = resp1.json().get("code")
             num_acomp = int(data1.get("numero_acompanantes") or 0)
 
             if num_acomp >= 1 and padre_id:
-                # --- Crear JSON del Request 2 ---
                 data2 = {
                     "tipo_identificacion": normalize(fields.get("Tipo de identificación (acompañante)")),
                     "numero_identificacion": normalize(fields.get("Número de identificación (acompañante)")),
@@ -69,24 +82,26 @@ def handle_tally_webhook():
                     "check_out": data1["check_out"],
                     "padre": padre_id
                 }
-                print("📦 Enviando Request 2:", data2)
+
+                log("📤 JSON Enviado (Request 2)", data2)
                 resp2 = requests.post(URL_2, headers=HEADERS, json=data2)
-                print("Response 2:", resp2.status_code, resp2.text)
+                log(f"📥 Respuesta Request 2 ({resp2.status_code})", resp2.text)
             else:
-                print("ℹ️ No se envió el request 2: sin acompañantes o sin padre_id.")
+                log("ℹ️ No se envió Request 2", {"numero_acompanantes": num_acomp, "padre_id": padre_id})
         else:
-            print("❌ Error en request 1:", resp1.status_code)
+            log("❌ Error en Request 1", {"status": resp1.status_code, "body": resp1.text})
 
         return jsonify({"status": "ok"}), 200
 
     except Exception as e:
-        print("❌ Error procesando webhook:", str(e))
+        error_trace = traceback.format_exc()
+        log("💥 Error procesando webhook", {"error": str(e), "trace": error_trace})
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Servicio activo - Esperando formularios Tally", 200
+    return "✅ Servicio activo - Esperando formularios Tally", 200
 
 
 if __name__ == '__main__':
